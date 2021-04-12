@@ -1,0 +1,16 @@
+diff --git a/src/rebar3.erl b/src/rebar3.erl
+index 1c0f3684..d7747d3a 100644
+--- a/src/rebar3.erl
++++ b/src/rebar3.erl
+@@ -205,7 +205,10 @@ init_config() ->
+     ok = rebar_log:init(command_line, Verbosity),
+ 
+     Config = rebar_config:consult_root(),
+-    Config1 = rebar_config:merge_locks(Config, rebar_config:consult_lock_file(?LOCK_FILE)),
++    Config1 = case os:getenv("REBAR_NIX_IGNORE_DEPS", "") of
++                  "" -> rebar_config:merge_locks(Config, rebar_config:consult_lock_file(?LOCK_FILE));
++                  _ -> proplists:delete(deps, Config)
++              end,
+ 
+     %% If $HOME/.config/rebar3/rebar.config exists load and use as global config
+     GlobalConfigFile = rebar_dir:global_config(),

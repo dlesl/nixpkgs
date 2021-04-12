@@ -1,6 +1,6 @@
 { lib, stdenv, fetchFromGitHub,
   fetchHex, erlang,
-  tree }:
+  tree, writeScript, writeTextDir, bash, p7zip, makeWrapper, writeShellScriptBin }:
 
 let
   version = "3.14.4";
@@ -67,71 +67,98 @@ let
     version = "1.1.6";
     sha256 = "1026l1z1jh25z8bfrhaw0ryk5gprhrpnirq877zqhg253x3x5c5x";
   };
-in
-stdenv.mkDerivation rec {
-  pname = "rebar3";
-  inherit version erlang;
 
-  # How to obtain `sha256`:
-  # nix-prefetch-url --unpack https://github.com/erlang/rebar3/archive/${version}.tar.gz
-  src = fetchFromGitHub {
-    owner = "erlang";
-    repo = pname;
-    rev = version;
-    sha256 = "09bnqwli93sq1pcz4h88ks7qg7k8yrjy9fd46yyp8xdl7i4irwy2";
+  rebar3 = stdenv.mkDerivation rec {
+    pname = "rebar3";
+    inherit version erlang;
+
+    # How to obtain `sha256`:
+    # nix-prefetch-url --unpack https://github.com/erlang/rebar3/archive/${version}.tar.gz
+    src = fetchFromGitHub {
+      owner = "erlang";
+      repo = pname;
+      rev = version;
+      sha256 = "09bnqwli93sq1pcz4h88ks7qg7k8yrjy9fd46yyp8xdl7i4irwy2";
+    };
+
+    bootstrapper = ./rebar3-nix-bootstrap;
+
+    buildInputs = [ erlang tree ];
+
+    postPatch = ''
+      mkdir -p _checkouts
+      mkdir -p _build/default/lib/
+
+      cp --no-preserve=mode -R ${bbmustache} _checkouts/bbmustache
+      cp --no-preserve=mode -R ${certifi} _checkouts/certifi
+      cp --no-preserve=mode -R ${cf} _checkouts/cf
+      cp --no-preserve=mode -R ${cth_readable} _checkouts/cth_readable
+      cp --no-preserve=mode -R ${erlware_commons} _checkouts/erlware_commons
+      cp --no-preserve=mode -R ${eunit_formatters} _checkouts/eunit_formatters
+      cp --no-preserve=mode -R ${getopt} _checkouts/getopt
+      cp --no-preserve=mode -R ${parse_trans} _checkouts/parse_trans
+      cp --no-preserve=mode -R ${providers} _checkouts/providers
+      cp --no-preserve=mode -R ${relx} _checkouts/relx
+      cp --no-preserve=mode -R ${ssl_verify_fun} _checkouts/ssl_verify_fun
+
+      # Bootstrap script expects the dependencies in _build/default/lib
+      # TODO: Make it accept checkouts?
+      for i in _checkouts/* ; do
+          ln -s $(pwd)/$i $(pwd)/_build/default/lib/
+      done
+    '';
+
+    buildPhase = ''
+      HOME=. escript bootstrap
+    '';
+
+    installPhase = ''
+      mkdir -p $out/bin
+      cp rebar3 $out/bin/rebar3
+    '';
+
+    meta = {
+      homepage = "https://github.com/rebar/rebar3";
+      description = "Erlang build tool that makes it easy to compile and test Erlang applications, port drivers and releases";
+
+      longDescription = ''
+        rebar is a self-contained Erlang script, so it's easy to distribute or
+        even embed directly in a project. Where possible, rebar uses standard
+        Erlang/OTP conventions for project structures, thus minimizing the amount
+        of build configuration work. rebar also provides dependency management,
+        enabling application writers to easily re-use common libraries from a
+        variety of locations (hex.pm, git, hg, and so on).
+        '';
+
+      platforms = lib.platforms.unix;
+      maintainers = lib.teams.beam.members;
+      license = lib.licenses.asl20;
+    };
   };
-
-  bootstrapper = ./rebar3-nix-bootstrap;
-
-  buildInputs = [ erlang tree ];
-
-  postPatch = ''
-    mkdir -p _checkouts
-    mkdir -p _build/default/lib/
-
-    cp --no-preserve=mode -R ${bbmustache} _checkouts/bbmustache
-    cp --no-preserve=mode -R ${certifi} _checkouts/certifi
-    cp --no-preserve=mode -R ${cf} _checkouts/cf
-    cp --no-preserve=mode -R ${cth_readable} _checkouts/cth_readable
-    cp --no-preserve=mode -R ${erlware_commons} _checkouts/erlware_commons
-    cp --no-preserve=mode -R ${eunit_formatters} _checkouts/eunit_formatters
-    cp --no-preserve=mode -R ${getopt} _checkouts/getopt
-    cp --no-preserve=mode -R ${parse_trans} _checkouts/parse_trans
-    cp --no-preserve=mode -R ${providers} _checkouts/providers
-    cp --no-preserve=mode -R ${relx} _checkouts/relx
-    cp --no-preserve=mode -R ${ssl_verify_fun} _checkouts/ssl_verify_fun
-
-    # Bootstrap script expects the dependencies in _build/default/lib
-    # TODO: Make it accept checkouts?
-    for i in _checkouts/* ; do
-        ln -s $(pwd)/$i $(pwd)/_build/default/lib/
-    done
-  '';
-
-  buildPhase = ''
-    HOME=. escript bootstrap
-  '';
-
-  installPhase = ''
-    mkdir -p $out/bin
-    cp rebar3 $out/bin/rebar3
-  '';
-
-  meta = {
-    homepage = "https://github.com/rebar/rebar3";
-    description = "Erlang build tool that makes it easy to compile and test Erlang applications, port drivers and releases";
-
-    longDescription = ''
-      rebar is a self-contained Erlang script, so it's easy to distribute or
-      even embed directly in a project. Where possible, rebar uses standard
-      Erlang/OTP conventions for project structures, thus minimizing the amount
-      of build configuration work. rebar also provides dependency management,
-      enabling application writers to easily re-use common libraries from a
-      variety of locations (hex.pm, git, hg, and so on).
+  rebar3WithPlugins = { plugins ? [], globalPlugins ? [ ] }:
+    let
+      pluginLibDirs = map (p: "${p}/lib/erlang/lib") plugins;
+      rebar3Patched = (rebar3.overrideAttrs (old: {
+        patches =
+          [ ./skip-plugins.patch ./ignore-deps.patch ./global-deps.patch ];
+      }));
+    in stdenv.mkDerivation {
+      name = "rebar3-with-plugins";
+      inherit (rebar3) version;
+      nativeBuildInputs = [ erlang p7zip makeWrapper ];
+      unpackPhase = "true";
+      installPhase = ''
+        mkdir -p $out/lib/rebar3nix/ebin
+        cp ${./rebar3nix.erl} rebar3nix.erl
+        erlc -o $out/lib/rebar3nix/ebin rebar3nix.erl
+        (cd $out/lib && 7za x ${rebar3Patched}/bin/rebar3)
+        mkdir -p $out/bin
+        makeWrapper ${erlang}/bin/erl $out/bin/rebar3 \
+          --set REBAR_GLOBAL_PLUGINS "${
+            toString (globalPlugins ++ [ "rebar3nix" ])
+          }" \
+          --suffix-each ERL_LIBS ":" "$out/lib ${toString pluginLibDirs}" \
+          --add-flags "+sbtu +A1 -noshell -boot start_clean -s rebar3 main -extra"
       '';
-
-    platforms = lib.platforms.unix;
-    maintainers = lib.teams.beam.members;
-    license = lib.licenses.asl20;
-  };
-}
+    };
+in {inherit rebar3 rebar3WithPlugins;}

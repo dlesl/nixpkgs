@@ -19,7 +19,9 @@ let
       beamPackages = self;
 
       rebar = callPackage ../tools/build-managers/rebar { };
-      rebar3 = callPackage ../tools/build-managers/rebar3 { };
+      rebar3 = (callPackage ../tools/build-managers/rebar3 { }).rebar3;
+      rebar3WithPlugins = (callPackage ../tools/build-managers/rebar3 { }).rebar3WithPlugins;
+      erlang-ls = (callPackage ./erlang-ls { });
 
       # rebar3 port compiler plugin is required by buildRebar3
       pc = callPackage ./pc { };
